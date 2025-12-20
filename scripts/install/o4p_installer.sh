@@ -1,7 +1,7 @@
 #!/bin/bash
 # Colors: \e[36m=Cyan M ; \e[92m=Light green ; \e[91m=Light red ; \e[93m=Light yellow ; \e[31m=green ; \e[0m=Default ; \e[33m=Yellow ; \e[31m=Red
 
-#Version: 2.0.3 - 20220206
+#Version: 2.0.4 - Switched to venv, do to external managed environment - PEP-668
 #branch="development"
 repo="https://github.com/splitti/oled_phoniebox"
 branch="master"
@@ -12,6 +12,7 @@ cyan="\e[1;36m"
 yellow="\e[1;93m"
 green="\e[1;92m"
 installPath="/home/pi/oled_phoniebox"
+venvPath="${installPath}/venv"
 
 clear
 echo -e "////////////////////////////////////////////////////////////////////////////////////////////////////////////////"
@@ -208,7 +209,7 @@ do
     esac
 done
 echo -e ""
-echo -e "Starting installation-process, pleae wait, some steps taking"
+echo -e "Starting installation-process, please wait, some steps taking"
 echo -e "minutes, especially the luma-Packages..."
 echo -e ""
 echo -e -n "   --> Update Sources:          "
@@ -218,7 +219,7 @@ echo -e ""
 echo -e "Install packages..."
 
 lineLen=24
-packages=(git python3 build-essential python3-dev python3-pip libjpeg-dev i2c-tools) # python3-smbus i2c-tools  libfreetype6-dev   python3-pygame libtiff5)
+packages=(git python3 build-essential python3-dev python3-pip python3-venv libjpeg-dev i2c-tools)
 for p in ${packages[@]}; do
 	i=0
 	echo -n -e "   --> $p:"
@@ -243,31 +244,7 @@ for p in ${packages[@]}; do
 		echo -e "${green}already installed${nocolor}"
 	fi
 done
-lumaPackages=(luma.core luma.oled netifaces)
-for p in ${lumaPackages[@]}; do
-	i=0
-	let lLen="$lineLen"-"${#p}"
-	echo -n -e "   --> $p:"
-	while [ "$i" -lt "$lLen" ]
-	do
-		let i+=1
-		echo -n -e " "
-	done
-	pipInstalled=`sudo pip3 show ${p}`
-	if [ "$pipInstalled" = "" ]
-	then
-		sudo pip3 install ${p}  > /dev/null 2>&1
-		pipInstalled=`sudo pip3 show ${p}`
-		if [ "$pipInstalled" = "" ]
-		then
-			echo -e "${red}failed${nocolor}"
-		else
-			echo -e "${green}done${nocolor}"
-		fi
-	else
-		echo -e "${green}already installed${nocolor}"
-	fi
-done
+
 echo -e ""
 echo -e "Enable I2C..."
 if grep -q 'i2c-bcm2708' /etc/modules; then
@@ -330,6 +307,7 @@ echo -e ""
 echo -e "Repository:       ${green}${repo}${nocolor}"
 echo -e "Branch:           ${green}${branch}${nocolor}"
 echo -e "Install Path:     ${green}${installPath}${nocolor}"
+echo -e "Venv Path:        ${green}${venvPath}${nocolor}"
 echo -e "Display Mode:     ${green}${mode}${nocolor}"
 echo -e "Controler Type:   ${green}${controller}${nocolor}"
 echo -e "Contrast:         ${green}${contrast}${nocolor}"
@@ -349,6 +327,40 @@ echo -e -n "   --> Clone oled_phoniebox Repository:   "
 git clone ${repo} --branch ${branch} ${installPath} > /dev/null 2>&1
 echo -e "${green}Done${nocolor}"
 echo -e ""
+
+echo -e -n "   --> Create Python venv:                "
+python3 -m venv ${venvPath} > /dev/null 2>&1
+echo -e "${green}Done${nocolor}"
+echo -e ""
+
+echo -e "Install Python packages in venv..."
+lumaPackages=(luma.core luma.oled netifaces gpiozero RPi.GPIO)
+for p in ${lumaPackages[@]}; do
+	i=0
+	let lLen="$lineLen"-"${#p}"
+	echo -n -e "   --> $p:"
+	while [ "$i" -lt "$lLen" ]
+	do
+		let i+=1
+		echo -n -e " "
+	done
+	pipInstalled=`${venvPath}/bin/pip show ${p} 2>/dev/null`
+	if [ "$pipInstalled" = "" ]
+	then
+		${venvPath}/bin/pip install ${p}  > /dev/null 2>&1
+		pipInstalled=`${venvPath}/bin/pip show ${p} 2>/dev/null`
+		if [ "$pipInstalled" = "" ]
+		then
+			echo -e "${red}failed${nocolor}"
+		else
+			echo -e "${green}done${nocolor}"
+		fi
+	else
+		echo -e "${green}already installed${nocolor}"
+	fi
+done
+echo -e ""
+
 echo -e -n "   --> Write Config-File:                 "
 sudo cp ${installPath}/templates/conf.template ${installPath}/oled_phoniebox.conf > /dev/null
 sudo sed -i -e "s:<contrastvalue>:${contrast}:g" ${installPath}/oled_phoniebox.conf> /dev/null
@@ -358,11 +370,12 @@ echo -e "${green}Done${nocolor}"
 echo -e ""
 echo -e -n "   --> Installing Service:                "
 sudo chown -R pi:pi ${installPath} > /dev/null
-#sudo chmod +x ${installPath}/oled_phoniebox.py > /dev/null
 sudo cp ${installPath}/templates/service.template /etc/systemd/oled_phoniebox.service > /dev/null
 sudo chown root:root /etc/systemd/oled_phoniebox.service > /dev/null 2>&1
 sudo chmod 644 /etc/systemd/oled_phoniebox.service > /dev/null 2>&1
 sudo sed -i -e "s:<PATH>:${installPath}:g" /etc/systemd/oled_phoniebox.service > /dev/null
+# Update service to use venv Python
+sudo sed -i -e "s|ExecStart=.*oled_phoniebox.py|ExecStart=${venvPath}/bin/python ${installPath}/oled_phoniebox.py|g" /etc/systemd/oled_phoniebox.service > /dev/null
 sudo systemctl daemon-reload > /dev/null 2>&1
 sudo systemctl enable /etc/systemd/oled_phoniebox.service > /dev/null 2>&1
 sudo service oled_phoniebox restart > /dev/null 2>&1
@@ -412,7 +425,6 @@ do
         "Option 1: Replace service for disyplay control")
 			echo -e " "
 			echo -e -n "   --> Delete old Service:                "
-			#sudo chmod +x ${installPath}/scripts/gpio-buttons/gpio-buttons.py > /dev/null
 			sudo service phoniebox-gpio-buttons stop > /dev/null 2>&1
 			sudo systemctl disable phoniebox-gpio-buttons > /dev/null  2>&1
 			sudo systemctl disable phoniebox-gpio-control.service > /dev/null  2>&1
@@ -421,6 +433,8 @@ do
 			echo -e -n "   --> Installing Service:                "
 			sudo cp ${installPath}/templates/gpio-service.template /etc/systemd/system/phoniebox-gpio-buttons.service > /dev/null 2>&1
 			sudo sed -i -e "s:<PATH>:${installPath}:g" /etc/systemd/system/phoniebox-gpio-buttons.service > /dev/null 2>&1
+			# Update GPIO service to use venv Python
+			sudo sed -i -e "s|ExecStart=.*gpio-buttons.py|ExecStart=${venvPath}/bin/python ${installPath}/scripts/gpio-buttons/gpio-buttons.py|g" /etc/systemd/system/phoniebox-gpio-buttons.service > /dev/null 2>&1
 			sudo chown root:root /etc/systemd/system/phoniebox-gpio-buttons.service > /dev/null 2>&1
 			sudo chmod 644 /etc/systemd/system/phoniebox-gpio-buttons.service > /dev/null 2>&1
 			sudo systemctl enable phoniebox-gpio-buttons > /dev/null 2>&1
